@@ -1,0 +1,80 @@
+service: vpc-endpoint
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 'sns:Publish'
+      Resource: '*'
+  environment:
+    SMS_NUMBER: '+15555555555'
+  vpc:
+    securityGroupIds:
+      - !GetAtt VpcEndpointLambdaSecurityGroup.GroupId
+    subnetIds:
+      - !Ref SubnetAPrivate
+      - !Ref SubnetBPrivate
+
+functions:
+  sendText:
+    handler: handler.main
+
+resources:
+  Resources:
+    VPC:
+      Type: 'AWS::EC2::VPC'
+      Properties:
+        CidrBlock: !Sub '10.0.0.0/16'
+        EnableDnsSupport: true
+        EnableDnsHostnames: true
+        InstanceTenancy: default
+    SubnetAPrivate:
+      Type: 'AWS::EC2::Subnet'
+      Properties:
+        AvailabilityZone: !Select [0, !GetAZs '']
+        CidrBlock: !Sub '10.0.128.0/20'
+        VpcId: !Ref VPC
+    SubnetBPrivate:
+      Type: 'AWS::EC2::Subnet'
+      Properties:
+        AvailabilityZone: !Select [1, !GetAZs '']
+        CidrBlock: !Sub '10.0.144.0/20'
+        VpcId: !Ref VPC
+    VpcEndpointSecurityGroup:
+      Type: 'AWS::EC2::SecurityGroup'
+      Properties:
+        VpcId: !Ref VPC
+        GroupDescription: 'Security group for VPC Endpoint'
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            SourceSecurityGroupId: !GetAtt VpcEndpointLambdaSecurityGroup.GroupId
+    SNSVPCEndpoint:
+      Type: AWS::EC2::VPCEndpoint
+      Properties: 
+        PrivateDnsEnabled: True
+        SecurityGroupIds: 
+          - !GetAtt VpcEndpointSecurityGroup.GroupId
+        ServiceName: 'com.amazonaws.us-east-1.sns'
+        SubnetIds: 
+          - !Ref SubnetAPrivate
+          - !Ref SubnetBPrivate
+        VpcEndpointType: Interface
+        VpcId: !Ref VPC
+    VpcEndpointLambdaSecurityGroup:
+      Type: 'AWS::EC2::SecurityGroup'
+      Properties:
+        VpcId: !Ref VPC
+        GroupDescription: 'Security group for VPC Endpoint Lambda'
+        
+  Outputs:
+    VPC:
+      Description: 'VPC'
+      Value: !Ref VPC
+    SubnetsPrivate:
+      Description: 'Subnets private'
+      Value: !Join [',', [!Ref SubnetAPrivate, !Ref SubnetBPrivate]]

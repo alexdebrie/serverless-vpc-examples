@@ -1,0 +1,166 @@
+service: nat-gateway
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+  iamRoleStatements:
+    - Effect: Allow
+      Action: 'sns:Publish'
+      Resource: '*'
+  environment:
+    SMS_NUMBER: '+15555555555'
+  vpc:
+    securityGroupIds:
+      - !GetAtt NatGatewayLambdaSecurityGroup.GroupId
+    subnetIds:
+      - !Ref SubnetAPrivate
+      - !Ref SubnetBPrivate
+
+functions:
+  sendText:
+    handler: handler.main
+
+resources:
+  Resources:
+    VPC:
+      Type: 'AWS::EC2::VPC'
+      Properties:
+        CidrBlock: !Sub '10.0.0.0/16'
+        EnableDnsSupport: true
+        EnableDnsHostnames: true
+        InstanceTenancy: default
+    InternetGateway:
+      Type: 'AWS::EC2::InternetGateway'
+      Properties:
+        Tags:
+        - Key: Name
+          Value: !Sub '10.0.0.0/16'
+    VPCGatewayAttachment:
+      Type: 'AWS::EC2::VPCGatewayAttachment'
+      Properties:
+        VpcId: !Ref VPC
+        InternetGatewayId: !Ref InternetGateway
+    SubnetAPublic:
+      Type: 'AWS::EC2::Subnet'
+      Properties:
+        AvailabilityZone: !Select [0, !GetAZs '']
+        CidrBlock: !Sub '10.0.0.0/20'
+        MapPublicIpOnLaunch: true
+        VpcId: !Ref VPC
+    SubnetAPrivate:
+      Type: 'AWS::EC2::Subnet'
+      Properties:
+        AvailabilityZone: !Select [0, !GetAZs '']
+        CidrBlock: !Sub '10.0.128.0/20'
+        VpcId: !Ref VPC
+    SubnetBPublic:
+      Type: 'AWS::EC2::Subnet'
+      Properties:
+        AvailabilityZone: !Select [1, !GetAZs '']
+        CidrBlock: !Sub '10.0.16.0/20'
+        MapPublicIpOnLaunch: true
+        VpcId: !Ref VPC
+    SubnetBPrivate:
+      Type: 'AWS::EC2::Subnet'
+      Properties:
+        AvailabilityZone: !Select [1, !GetAZs '']
+        CidrBlock: !Sub '10.0.144.0/20'
+        VpcId: !Ref VPC
+    RouteTableAPublic:
+      Type: 'AWS::EC2::RouteTable'
+      Properties:
+        VpcId: !Ref VPC
+    RouteTableAPrivate:
+      Type: 'AWS::EC2::RouteTable'
+      Properties:
+        VpcId: !Ref VPC
+    RouteTableBPublic:
+      Type: 'AWS::EC2::RouteTable'
+      Properties:
+        VpcId: !Ref VPC
+    RouteTableBPrivate:
+      Type: 'AWS::EC2::RouteTable'
+      Properties:
+        VpcId: !Ref VPC
+    RouteTableAssociationAPublic:
+      Type: 'AWS::EC2::SubnetRouteTableAssociation'
+      Properties:
+        SubnetId: !Ref SubnetAPublic
+        RouteTableId: !Ref RouteTableAPublic
+    RouteTableAssociationAPrivate:
+      Type: 'AWS::EC2::SubnetRouteTableAssociation'
+      Properties:
+        SubnetId: !Ref SubnetAPrivate
+        RouteTableId: !Ref RouteTableAPrivate
+    RouteTableAssociationBPublic:
+      Type: 'AWS::EC2::SubnetRouteTableAssociation'
+      Properties:
+        SubnetId: !Ref SubnetBPublic
+        RouteTableId: !Ref RouteTableBPublic
+    RouteTableAssociationBPrivate:
+      Type: 'AWS::EC2::SubnetRouteTableAssociation'
+      Properties:
+        SubnetId: !Ref SubnetBPrivate
+        RouteTableId: !Ref RouteTableBPrivate
+    RouteTablePublicAInternetRoute:
+      Type: 'AWS::EC2::Route'
+      DependsOn: VPCGatewayAttachment
+      Properties:
+        RouteTableId: !Ref RouteTableAPublic
+        DestinationCidrBlock: '0.0.0.0/0'
+        GatewayId: !Ref InternetGateway
+    RouteTablePublicBInternetRoute:
+      Type: 'AWS::EC2::Route'
+      DependsOn: VPCGatewayAttachment
+      Properties:
+        RouteTableId: !Ref RouteTableBPublic
+        DestinationCidrBlock: '0.0.0.0/0'
+        GatewayId: !Ref InternetGateway
+    EIPA:
+      Type: 'AWS::EC2::EIP'
+      Properties:
+        Domain: vpc
+    EIPB:
+      Type: 'AWS::EC2::EIP'
+      Properties:
+        Domain: vpc
+    NatGatewayA:
+      Type: 'AWS::EC2::NatGateway'
+      Properties:
+        AllocationId: !GetAtt 'EIPA.AllocationId'
+        SubnetId: !Ref SubnetAPublic
+    RouteA:
+      Type: 'AWS::EC2::Route'
+      Properties:
+        RouteTableId: !Ref RouteTableAPrivate
+        DestinationCidrBlock: '0.0.0.0/0'
+        NatGatewayId: !Ref NatGatewayA
+    NatGatewayB:
+      Type: 'AWS::EC2::NatGateway'
+      Properties:
+        AllocationId: !GetAtt 'EIPB.AllocationId'
+        SubnetId: !Ref SubnetBPublic
+    RouteB:
+      Type: 'AWS::EC2::Route'
+      Properties:
+        RouteTableId: !Ref RouteTableBPrivate
+        DestinationCidrBlock: '0.0.0.0/0'
+        NatGatewayId: !Ref NatGatewayB
+    NatGatewayLambdaSecurityGroup:
+      Type: 'AWS::EC2::SecurityGroup'
+      Properties:
+        VpcId: !Ref VPC
+        GroupDescription: 'Security group for NAT Gateway Lambda'
+        
+  Outputs:
+    VPC:
+      Description: 'VPC'
+      Value: !Ref VPC
+    SubnetsPublic:
+      Description: 'Subnets public'
+      Value: !Join [',', [!Ref SubnetAPublic, !Ref SubnetBPublic]]
+    SubnetsPrivate:
+      Description: 'Subnets private'
+      Value: !Join [',', [!Ref SubnetAPrivate, !Ref SubnetBPrivate]]
